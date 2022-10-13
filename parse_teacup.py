@@ -1,19 +1,25 @@
 # %%
+from typing import Any
 import pysd
 from pysd import load
 from pysd.translators.vensim.vensim_file import VensimFile
 from pysd.builders.python.python_model_builder import ModelBuilder
-from pysd.builders.python.python_model_builder_subscripts import SubscripterModelBuilder
 from pysd.translators.structures.abstract_model import (
     AbstractModel,
     AbstractSubscriptRange,
 )
-from pysd.translators.structures.abstract_expressions import ReferenceStructure
+from pysd.translators.structures.abstract_expressions import (
+    ReferenceStructure,
+    IntegStructure,
+    AbstractSyntax,
+    ArithmeticStructure,
+    SubscriptsReferenceStructure,
+)
 import numpy as np
 
 # %%
-# mdl_file = "teacup.mdl"
-mdl_file = "test_subscript_3d_arrays_lengthwise.mdl"
+mdl_file = "teacup.mdl"
+# mdl_file = "test_subscript_3d_arrays_lengthwise.mdl"
 # pysd.read_vensim(mdl_file)
 
 # %%
@@ -38,19 +44,62 @@ if split_views:
 
 
 # %%
+perturb_sigma = 0.2
 N_MEMBERS = 5
-vars = ["Three Dimensional Constant", "Three Dimensional Variable"]
+subscript_list = [f"m_{i}" for i in range(N_MEMBERS)]
+subscript_tuple = tuple(subscript_list)
+vars = ["Characteristic Time", "Teacup Temperature"]
 
 ven_file.parse()
 # get AbstractModel
 abs_model = ven_file.get_abstract_model()
 
 
+def add_subscript_to_abstact_syntax(
+    ast: AbstractSyntax | int | float | np.ndarray,
+) -> AbstractSyntax:
+    """Return a new ast with the added substcript."""
+    if isinstance(ast, ReferenceStructure):
+        if ast.subscripts is not None:
+            ast.subscripts.subscripts.insert(0, "Ensemble Dimension")
+        else:
+            # This will bug later if you use tuple instead of list ;(
+            # Actually it also raised a warning, but I guess it comes
+            # from the IntegStructure flow thing that duplicates because
+            # we already set values to the flow
+            # ast.subscripts = SubscriptsReferenceStructure(subscript_list)
+            pass
+        return ast
+    elif isinstance(ast, IntegStructure):
+        print(ast)
+        ast.flow = add_subscript_to_abstact_syntax(ast.flow)
+        ast.initial = add_subscript_to_abstact_syntax(ast.initial)
+        print(ast)
+        return ast
+    elif isinstance(ast, np.ndarray):
+        shape = np.shape(ast)
+        return np.tile(ast, N_MEMBERS).reshape((N_MEMBERS,) + shape)
+    elif isinstance(ast, int | float):
+        # return np.full(N_MEMBERS, ast)
+        return ast + np.random.normal(scale=perturb_sigma, size=N_MEMBERS) * ast
+    elif isinstance(ast, ArithmeticStructure):
+        ast.arguments = tuple(
+            [add_subscript_to_abstact_syntax(arg) for arg in ast.arguments]
+        )
+        return ast
+
+    else:
+        raise TypeError("Cannot add subscript to ast:", ast, type(ast))
+
+    raise RuntimeError("should not arrive here")
+
+
 def add_subscript(model: AbstractModel):
     # Create the subscript range
+
     sub_range = AbstractSubscriptRange(
         name="Ensemble Dimension",
-        subscripts=[f"m_{i}" for i in range(N_MEMBERS)],
+        subscripts=subscript_list,
         mapping=[],
     )
     for section in model.sections:
@@ -61,24 +110,15 @@ def add_subscript(model: AbstractModel):
             if el.name not in vars:
                 continue
             for c in el.components:
-                print(c)
-                print(c.ast)
+                print("before", c)
                 c.subscripts[0].insert(0, "Ensemble Dimension")
-                print(c.subscripts)
-                if isinstance(c.ast, np.ndarray):
-                    shape = np.shape(c.ast)
-                    c.ast = np.tile(c.ast, N_MEMBERS).reshape((N_MEMBERS,) + shape)
-                elif isinstance(c.ast, ReferenceStructure):
-                    print(c.ast)
-                    c.ast.subscripts.subscripts.insert(0, "Ensemble Dimension")
-                    print(c.ast)
-                else:
-                    raise TypeError(c.ast, type(c.ast))
+                c.ast = add_subscript_to_abstact_syntax(c.ast)
+                print("after", c)
 
 
 add_subscript(abs_model)
 # %%
-py_model_modified = SubscripterModelBuilder(abs_model)
+py_model_modified = ModelBuilder(abs_model)
 # change the name of the file
 py_model_modified.sections[0].path = py_model_modified.sections[0].path.with_stem(
     "modified"
