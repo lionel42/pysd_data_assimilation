@@ -16,6 +16,7 @@ from pysd.translators.structures.abstract_expressions import (
     SubscriptsReferenceStructure,
 )
 import numpy as np
+import pandas as pd
 
 # %%
 mdl_file = "teacup.mdl"
@@ -40,7 +41,6 @@ if split_views:
     # split variables per views
     subview_sep = kwargs.get("subview_sep", "")
     ven_file.parse_sketch(subview_sep)
-# %%
 
 
 # %%
@@ -125,7 +125,20 @@ py_model_modified.sections[0].path = py_model_modified.sections[0].path.with_ste
 )
 f_name = py_model_modified.build_model()
 m = load(f_name)
-m.run()
+#%% build X
+# https://en.wikipedia.org/wiki/Ensemble_Kalman_filter#Ensemble_Kalman_Filter
+vars
+X = np.concatenate([[getattr(m.components, m.namespace[f"{var}"])() for var in vars]])
+E_X = np.mean(X, axis=1)
+A = X - E_X.reshape(-1, 1)
+C = A.T.dot(A) / (N_MEMBERS - 1)
+
+R = 0.08
+
+X, E_X, A, C
+#%% run the model
+df_out = m.run()
+df_out
 # %%
 # build Python file
 py_model_file = ModelBuilder(abs_model).build_model()
@@ -135,3 +148,30 @@ py_model_file = ModelBuilder(abs_model).build_model()
 # load Python file
 model = load(py_model_file, data_files, initialize, missing_values)
 model.mdl_file = str(mdl_file)
+
+# %% specify the observations
+SIGMA = 0.1
+obs_vars = ['Teacup Temperature']
+observations = pd.DataFrame(
+    {
+        "time": df_out.index.to_numpy(),
+        "obs": df_out["Teacup Temperature[m_0]"].to_numpy()
+        + np.random.normal(0, SIGMA, len(df_out))
+        * df_out["Teacup Temperature[m_0]"].to_numpy(),
+        "obs_err": np.random.normal(0, SIGMA, len(df_out))
+        * df_out["Teacup Temperature[m_0]"].to_numpy(),
+    }
+)
+# %% extract data as kahlman notation
+
+D = np.array(
+    [
+        observations["obs"] + np.random.normal(0, R * observations["obs"])
+        for _ in range(N_MEMBERS)
+    ]
+).T
+D
+# %% extract model run from observation
+H_X =
+# %% find the posterior
+X_P = X + C
