@@ -149,9 +149,8 @@ py_model_file = ModelBuilder(abs_model).build_model()
 model = load(py_model_file, data_files, initialize, missing_values)
 model.mdl_file = str(mdl_file)
 
-# %% specify the observations
 SIGMA = 0.1
-obs_vars = ['Teacup Temperature']
+obs_vars = ["Teacup Temperature"]
 observations = pd.DataFrame(
     {
         "time": df_out.index.to_numpy(),
@@ -160,6 +159,7 @@ observations = pd.DataFrame(
         * df_out["Teacup Temperature[m_0]"].to_numpy(),
         "obs_err": np.random.normal(0, SIGMA, len(df_out))
         * df_out["Teacup Temperature[m_0]"].to_numpy(),
+        "variable": "Teacup Temperature",
     }
 )
 # %% extract data as kahlman notation
@@ -172,6 +172,26 @@ D = np.array(
 ).T
 D
 # %% extract model run from observation
-H_X =
-# %% find the posterior
-X_P = X + C
+# n_obs x n_members
+HX = np.array(
+    [
+        df_out.lookup(observations["time"], observations["variable"] + f"[m_{i}]")
+        for i in range(N_MEMBERS)
+    ]
+).T
+HX.shape
+# %%
+# apporximations
+# n_obs x n_obs
+HCHt = HX @ HX.T / (N_MEMBERS - 1)
+# n_states x n_obs
+CHt = X @ HX.T / (N_MEMBERS - 1)
+
+# Caluclate the kahlman gain
+# nstates x n_obs
+# TODO change the cov R
+K = CHt @ np.linalg.inv(HCHt + 0)
+
+
+#%% Find the posterior distribution
+X_POST = X + K @ (D - HX)
