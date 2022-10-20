@@ -17,6 +17,8 @@ from pysd.translators.structures.abstract_expressions import (
 )
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import xarray as xr
 
 # %%
 mdl_file = "teacup.mdl"
@@ -45,7 +47,7 @@ if split_views:
 
 # %%
 perturb_sigma = 0.2
-N_MEMBERS = 5
+N_MEMBERS = 200
 subscript_list = [f"m_{i}" for i in range(N_MEMBERS)]
 subscript_tuple = tuple(subscript_list)
 vars = ["Characteristic Time", "Teacup Temperature"]
@@ -130,26 +132,22 @@ m = load(f_name)
 vars
 X = np.concatenate([[getattr(m.components, m.namespace[f"{var}"])() for var in vars]])
 E_X = np.mean(X, axis=1)
-A = X - E_X.reshape(-1, 1)
+A = X - E_X.reshape(-1, 1)  # Deviations from the state
 C = A.T.dot(A) / (N_MEMBERS - 1)
 
-R = 0.08
+# Standard deviation of th eobservations
+SIGMA = 0.1
+
 
 X, E_X, A, C
 #%% run the model
 df_out = m.run()
 df_out
-# %%
-# build Python file
-py_model_file = ModelBuilder(abs_model).build_model()
 
 
 # %%
-# load Python file
-model = load(py_model_file, data_files, initialize, missing_values)
-model.mdl_file = str(mdl_file)
 
-SIGMA = 0.1
+
 obs_vars = ["Teacup Temperature"]
 observations = pd.DataFrame(
     {
@@ -157,20 +155,26 @@ observations = pd.DataFrame(
         "obs": df_out["Teacup Temperature[m_0]"].to_numpy()
         + np.random.normal(0, SIGMA, len(df_out))
         * df_out["Teacup Temperature[m_0]"].to_numpy(),
-        "obs_err": np.random.normal(0, SIGMA, len(df_out))
-        * df_out["Teacup Temperature[m_0]"].to_numpy(),
+        "obs_err": SIGMA * df_out["Teacup Temperature[m_0]"].to_numpy(),
         "variable": "Teacup Temperature",
     }
-)
+).iloc[::5]
 # %% extract data as kahlman notation
 
 D = np.array(
     [
-        observations["obs"] + np.random.normal(0, R * observations["obs"])
+        np.random.normal(observations["obs"], observations["obs_err"])
         for _ in range(N_MEMBERS)
     ]
 ).T
 D
+# covariance of the observations
+D_ = D - observations["obs"].to_numpy().reshape((-1, 1)) / N_MEMBERS
+R = (D_ @ D_.T) / (N_MEMBERS - 1)
+# I cannot make it work with the above, but with eye it works magic
+R = np.eye(len(observations))
+
+
 # %% extract model run from observation
 # n_obs x n_members
 HX = np.array(
@@ -179,19 +183,74 @@ HX = np.array(
         for i in range(N_MEMBERS)
     ]
 ).T
-HX.shape
+
+
 # %%
-# apporximations
+# Observation matrix-free implementation (wiki)
+
+HA = HX - HX.mean(axis=1).reshape(-1, 1)
+
 # n_obs x n_obs
-HCHt = HX @ HX.T / (N_MEMBERS - 1)
-# n_states x n_obs
-CHt = X @ HX.T / (N_MEMBERS - 1)
+P = HA @ HA.T / (N_MEMBERS - 1) + R
 
 # Caluclate the kahlman gain
 # nstates x n_obs
-# TODO change the cov R
-K = CHt @ np.linalg.inv(HCHt + 0)
+K = A @ HA.T @ np.linalg.inv(P) / (N_MEMBERS - 1)
 
 
 #%% Find the posterior distribution
 X_POST = X + K @ (D - HX)
+X_POST
+# %%
+for m in range(N_MEMBERS):
+    plt.plot(df_out.index, df_out[f"Teacup Temperature[m_{m}]"], color="grey")
+
+obs_col = "blue"
+plt.plot(observations["time"], observations["obs"], color=obs_col)
+plt.fill_between(
+    observations["time"],
+    observations["obs"],
+    observations["obs"] + observations["obs_err"],
+    color=obs_col,
+)
+plt.fill_between(
+    observations["time"],
+    observations["obs"],
+    observations["obs"] - observations["obs_err"],
+    color=obs_col,
+)
+# %% Run the posterior, this will work only for 1d ensemble at the moment
+# load Python file
+m = load(f_name)
+posterior_vars_dict = {
+    var_name: xr.DataArray(X_POST[i, :], *m.get_coords(var_name))
+    for i, var_name in enumerate(vars)
+}
+df_post = m.run(
+    params={"Characteristic Time": posterior_vars_dict["Characteristic Time"]},
+    initial_condition=(
+        0,
+        {"Teacup Temperature": posterior_vars_dict["Teacup Temperature"]},
+    ),
+)
+
+# %% plot posterio
+for m in range(N_MEMBERS):
+    plt.plot(df_post.index, df_post[f"Teacup Temperature[m_{m}]"], color="grey")
+
+obs_col = "blue"
+plt.plot(observations["time"], observations["obs"], color=obs_col)
+plt.fill_between(
+    observations["time"],
+    observations["obs"],
+    observations["obs"] + observations["obs_err"],
+    color=obs_col,
+)
+plt.fill_between(
+    observations["time"],
+    observations["obs"],
+    observations["obs"] - observations["obs_err"],
+    color=obs_col,
+)
+
+# %%
