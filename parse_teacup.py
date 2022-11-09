@@ -8,17 +8,13 @@ from pysd.translators.structures.abstract_model import (
     AbstractModel,
     AbstractSubscriptRange,
 )
-from pysd.translators.structures.abstract_expressions import (
-    ReferenceStructure,
-    IntegStructure,
-    AbstractSyntax,
-    ArithmeticStructure,
-    SubscriptsReferenceStructure,
-)
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import xarray as xr
+
+from utils import add_subscript
 
 # %%
 mdl_file = "teacup.mdl"
@@ -46,79 +42,36 @@ if split_views:
 
 
 # %%
-perturb_sigma = 0.2
-N_MEMBERS = 200
+import importlib
+import utils
+importlib.reload(utils)
+import utils
+from utils import add_subscript, get_forward_dependencies
+N_MEMBERS = 20
 subscript_list = [f"m_{i}" for i in range(N_MEMBERS)]
+
 subscript_tuple = tuple(subscript_list)
 vars = ["Characteristic Time", "Teacup Temperature"]
+# TODO: add variables that are initial conditions
 
 ven_file.parse()
 # get AbstractModel
 abs_model = ven_file.get_abstract_model()
+original_model = ModelBuilder(abs_model)
+f_name = original_model.build_model()
+m = load(f_name)
+
+deps = get_forward_dependencies(m)
+subscripted_vars_dict = {
+    "Teacup Temperature": {
+        "initial": np.random.normal(80, 10, N_MEMBERS),
+        "merge": {"Heat Loss to Room": 'sum'}, # Varialbes that should merge subscripted variables into one before using (sum or mean)
+        "split": {}, # Variables that should be split before they are used by this
+    }
+}
 
 
-def add_subscript_to_abstact_syntax(
-    ast: AbstractSyntax | int | float | np.ndarray,
-) -> AbstractSyntax:
-    """Return a new ast with the added substcript."""
-    if isinstance(ast, ReferenceStructure):
-        if ast.subscripts is not None:
-            ast.subscripts.subscripts.insert(0, "Ensemble Dimension")
-        else:
-            # This will bug later if you use tuple instead of list ;(
-            # Actually it also raised a warning, but I guess it comes
-            # from the IntegStructure flow thing that duplicates because
-            # we already set values to the flow
-            # ast.subscripts = SubscriptsReferenceStructure(subscript_list)
-            pass
-        return ast
-    elif isinstance(ast, IntegStructure):
-        print(ast)
-        ast.flow = add_subscript_to_abstact_syntax(ast.flow)
-        ast.initial = add_subscript_to_abstact_syntax(ast.initial)
-        print(ast)
-        return ast
-    elif isinstance(ast, np.ndarray):
-        shape = np.shape(ast)
-        return np.tile(ast, N_MEMBERS).reshape((N_MEMBERS,) + shape)
-    elif isinstance(ast, int | float):
-        # return np.full(N_MEMBERS, ast)
-        return ast + np.random.normal(scale=perturb_sigma, size=N_MEMBERS) * ast
-    elif isinstance(ast, ArithmeticStructure):
-        ast.arguments = tuple(
-            [add_subscript_to_abstact_syntax(arg) for arg in ast.arguments]
-        )
-        return ast
-
-    else:
-        raise TypeError("Cannot add subscript to ast:", ast, type(ast))
-
-    raise RuntimeError("should not arrive here")
-
-
-def add_subscript(model: AbstractModel):
-    # Create the subscript range
-
-    sub_range = AbstractSubscriptRange(
-        name="Ensemble Dimension",
-        subscripts=subscript_list,
-        mapping=[],
-    )
-    for section in model.sections:
-        section.subscripts.append(sub_range)
-
-        for el in section.elements:
-            print(el.name)
-            if el.name not in vars:
-                continue
-            for c in el.components:
-                print("before", c)
-                c.subscripts[0].insert(0, "Ensemble Dimension")
-                c.ast = add_subscript_to_abstact_syntax(c.ast)
-                print("after", c)
-
-
-add_subscript(abs_model)
+add_subscript(abs_model, subscript_list,subscripted_vars_dict)
 # %%
 py_model_modified = ModelBuilder(abs_model)
 # change the name of the file
@@ -159,6 +112,15 @@ observations = pd.DataFrame(
         "variable": "Teacup Temperature",
     }
 ).iloc[::5]
+
+observations = pd.DataFrame(
+    {
+        "time": [1, 3, 20, 28],
+        "obs": [160, 120, 105, 100],
+        "obs_err": 20,
+        "variable": "Teacup Temperature",
+    }
+)
 # %% extract data as kahlman notation
 
 D = np.array(
