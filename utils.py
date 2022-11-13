@@ -91,16 +91,42 @@ def add_subscript_to_abstact_syntax(
 def add_merge_operation_to_abstact_syntax(
     ast: AbstractSyntax | int | float | np.ndarray,
     merge_dict: dict[str, str],
+    subscript_dim_name: str,
 ) -> AbstractSyntax:
     if isinstance(ast, ReferenceStructure):
         if not ast.reference in merge_dict.keys():
+            # This is a variable that does not have to be merged
             return ast
-        # apply the merging operation to the ast
-        return CallStructure(merge_dict[ast.reference], (ast))
+        merge_method = merge_dict[ast.reference]
+        accepted_operations = ['sum', 'prod', 'mean']
+        if merge_method in accepted_operations:
+            # apply the merging operation on the subscript axis to the ast
+            call_func = ReferenceStructure(
+                merge_method,
+                subscripts=SubscriptsReferenceStructure(
+                    (subscript_dim_name + "!", ))
+            )
+            ast.subscripts = SubscriptsReferenceStructure(
+                (subscript_dim_name + "!", ))
+            return CallStructure(call_func, (ast,))
+        elif (
+            merge_method.startswith('weighted_')
+            and merge_method.split('_')[1] in accepted_operations
+        ):
+            call_func = ReferenceStructure(
+                merge_method,
+                subscripts=SubscriptsReferenceStructure(
+                    (subscript_dim_name + "!", ))
+            )
+            ast.subscripts = SubscriptsReferenceStructure(
+                (subscript_dim_name + "!", ))
+            return  CallStructure(call_func, (ast,))
+        else:
+            raise ValueError(f"Unknown merging method {merge_method}")
     elif isinstance(ast, ArithmeticStructure):
         ast.arguments = tuple([
             # apply it recursively to the arguments
-            add_merge_operation_to_abstact_syntax(arg_ast, merge_dict) for arg_ast in ast.arguments
+            add_merge_operation_to_abstact_syntax(arg_ast, merge_dict, subscript_dim_name) for arg_ast in ast.arguments
         ])
 
         return ast
@@ -146,10 +172,13 @@ def add_subscript(
         mapping=[],
     )
 
-    merg_on_variables = {
-        merge_var: {to_pysd_name(var_name): operation} for var_name, d in subscripted_vars_dict.items()
-        for merge_var, operation in d.get("merge", {}).items()
-    }
+    merg_on_variables = {}
+    for var_name, d in subscripted_vars_dict.items():
+        for merge_var, operation in d.get("merge", {}).items():
+            if merge_var not in merg_on_variables:
+                merg_on_variables[merge_var] = {}
+            merg_on_variables[merge_var][to_pysd_name(var_name)] = operation
+
     print("variables for merging", merg_on_variables)
     # TODO: maybe we can just add an arithmetic structure that does the
     # average or so
@@ -176,6 +205,6 @@ def add_subscript(
                 for c in el.components:
                     print("before", repr(c))
                     c.ast = add_merge_operation_to_abstact_syntax(
-                        c.ast, merg_on_variables[el.name]
+                        c.ast, merg_on_variables[el.name], subscript_dim_name=subscript_dim_name
                     )
                     print("after", repr(c))
