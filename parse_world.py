@@ -8,17 +8,23 @@ from pysd.translators.structures.abstract_model import (
     AbstractModel,
     AbstractSubscriptRange,
 )
-
+from pysd.translators.structures.abstract_expressions import (
+    ReferenceStructure,
+    IntegStructure,
+    AbstractSyntax,
+    ArithmeticStructure,
+    CallStructure,
+)
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import xarray as xr
+import logging
+from utils import add_subscript, get_all_dependencies, get_forward_dependencies
 
-from utils import add_subscript
-
-
+logging.basicConfig()
 # %%
-mdl_file = "teacup.mdl"
+mdl_file = "world3.mdl"
 # mdl_file = "test_subscript_3d_arrays_lengthwise.mdl"
 # pysd.read_vensim(mdl_file)
 
@@ -43,55 +49,71 @@ if split_views:
 
 
 # %%
-import importlib
-import utils
-importlib.reload(utils)
-import utils
-from utils import add_subscript, get_forward_dependencies
 N_MEMBERS = 3
 subscript_list = [f"m_{i}" for i in range(N_MEMBERS)]
 
 subscript_tuple = tuple(subscript_list)
-vars = ["Characteristic Time", "Teacup Temperature"]
 # TODO: add variables that are initial conditions
 
 ven_file.parse()
 # get AbstractModel
 abs_model = ven_file.get_abstract_model()
-original_model = ModelBuilder(abs_model)
-f_name = original_model.build_model()
-m = load(f_name)
+py_model_original = load(ModelBuilder(abs_model).build_model())
 
-deps = get_forward_dependencies(m)
+#%% look for all variables
 
+py_model_original.namespace.keys()
+#%% create variables
+
+#var = 'initial arable land'
+var = 'Arable Land'
+# First we can look at the dependencies of our model
+get_all_dependencies(py_model_original, var)
+
+#%%
+#%load_ext autoreload
+#%autoreload 2
+from utils import add_subscript
 # Dictonary defining how variables are behaving with the addition
 # of subscript.
+logging.getLogger('add_merge_operation_to_abstact_syntax').setLevel(level=logging.DEBUG)
+logging.getLogger('add_split_operation_to_abstact_syntax').setLevel(level=logging.DEBUG)
+logging.getLogger('add_subscript').setLevel(level=logging.DEBUG)
+
+# TODO: add option to propagate the subscript.
 subscripted_vars_dict = {
-    # Teacup temperature will be subscripted
-    "Teacup Temperature": {
+    # Arable Land' will be subscripted
+    "Arable Land": {
         # Define the initial values of the subscripts
         "initial": np.random.normal(80, 10, N_MEMBERS),
         # Varialbes that should merge subscripted variables into one before using (sum or mean)
+        # This is very important as variables could be propagating the subscript to
+        # others variables generating unexpected behaviours
         "merge": {
-            # heat loss reqired teacup temperature
-            # by specifying a merge on the teacup temperature
             # we specify that we want to use the mean of all
             # the teapcups temperatures as input for the
             # heat loss to room function
-            "Heat Loss to Room": 'mean'
+            'arable_land_in_gigahectares_gha': 'mean',
+            'food': 'mean',
+            'land_fr_cult': 'mean',
+            'agricultural_input_per_hectare': 'mean',
+            'land_erosion_rate': 'mean',
+            'potential_jobs_agricultural_sector': 'mean',
+            'persistent_pollution_generation_agriculture': 'mean',
         },
         # Variables splitted into a subscript before they are used by this one
-        "split": {},
-    },
-    "Characteristic Time": {
-        "initial": np.random.normal(10, 2, N_MEMBERS),
-        "merge": {"Heat Loss to Room": 'mean'}, # Variables that should merge subscripted variables into one before using (sum or mean)
-        "split": {}, # Variables that should be split before they are used by this
+        # If you don't put anything here it is in genral okay, as the float
+        # value will be used for all the subscripts
+        "split": {
+            "initial_arable_land": {
+                "factors": np.random.normal(1, 0.1, N_MEMBERS)
+            }
+        },
     }
 }
+add_subscript(abs_model, subscript_list, subscripted_vars_dict, )
 
 
-add_subscript(abs_model, subscript_list,subscripted_vars_dict)
 # %%
 py_model_modified = ModelBuilder(abs_model)
 # change the name of the file
