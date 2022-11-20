@@ -94,10 +94,11 @@ def add_merge_operation_to_abstact_syntax(
     logger = logging.getLogger("add_merge_operation_to_abstact_syntax")
     logger.debug(f"{ast=}, {merge_dict=}")
     if isinstance(ast, ReferenceStructure):
-        if not ast.reference in merge_dict.keys():
+        ast_var = to_pysd_name(ast.reference)
+        if not ast_var in merge_dict.keys():
             # This is a variable that does not have to be merged
             return ast
-        merge_method = merge_dict[ast.reference]
+        merge_method = merge_dict[ast_var]
         accepted_operations = ["sum", "prod", "mean"]
         if merge_method in accepted_operations:
             # apply the merging operation on the subscript axis to the ast
@@ -152,10 +153,11 @@ def add_split_operation_to_abstact_syntax(
     logger = logging.getLogger("add_split_operation_to_abstact_syntax")
     logger.debug(f"{ast=}, {split_dict=}")
     if isinstance(ast, ReferenceStructure):
-        if not ast.reference in split_dict.keys():
+        ast_var = to_pysd_name(ast.reference)
+        if not ast_var in split_dict.keys():
             # This is a variable that does not have to be splitted
             return ast
-        split_method = split_dict[ast.reference]
+        split_method = split_dict[ast_var]
         if isinstance(split_method, dict):
             if "factors" in split_method:
                 # multiply the variable to the factors
@@ -225,7 +227,8 @@ def get_all_dependencies(model: pysd.py_backend.model.Model, var: str):
     vars = [var]
     prior_deps = model.get_dependencies(vars)
     # TODO: make something less expensive if possible
-    forward_deps = get_forward_dependencies(model)[model.namespace[var]]
+    py_name = model.namespace[var] if var in model.namespace else var
+    forward_deps = get_forward_dependencies(model)[py_name]
     return prior_deps, forward_deps
 
 
@@ -256,6 +259,7 @@ def add_subscript(
     subscripted_vars_dict = {
         to_pysd_name(key): item for key, item in subscripted_vars_dict.items()
     }
+    logger.debug(f"{subscripted_vars_dict=}")
 
     # Extract variables that will be used for merging
     merg_on_variables = {}
