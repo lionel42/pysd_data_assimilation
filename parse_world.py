@@ -66,7 +66,8 @@ py_model_original.namespace.keys()
 #%% create variables
 
 #var = 'initial arable land'
-var = 'Arable Land'
+#var = 'Arable Land'
+var = 'arable_land_in_gigahectares_gha'
 # First we can look at the dependencies of our model
 get_all_dependencies(py_model_original, var)
 
@@ -90,10 +91,8 @@ subscripted_vars_dict = {
         # This is very important as variables could be propagating the subscript to
         # others variables generating unexpected behaviours
         "merge": {
-            # we specify that we want to use the mean of all
-            # the teapcups temperatures as input for the
-            # heat loss to room function
-            'arable_land_in_gigahectares_gha': 'mean',
+            # we specify how the variable depending on Arable Land
+            # should now use the subscripted values
             'food': 'mean',
             'land_fr_cult': 'mean',
             'agricultural_input_per_hectare': 'mean',
@@ -109,7 +108,12 @@ subscripted_vars_dict = {
                 "factors": np.random.normal(1, 0.1, N_MEMBERS)
             }
         },
-    }
+    },
+    "arable_land_in_gigahectares_gha": {
+        "merge": {
+            'human_ecological_footprint': 'sum'
+        }
+    },
 }
 add_subscript(abs_model, subscript_list, subscripted_vars_dict, )
 
